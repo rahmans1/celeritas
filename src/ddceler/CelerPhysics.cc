@@ -11,6 +11,11 @@
 #include <DDG4/Factories.h>
 #include <DDG4/Geant4ActionPhase.h>
 #include <DDG4/Geant4Kernel.h>
+#include <DDG4/Geant4UserInitialization.h>
+#include <G4Run.hh>
+#include <G4RunManager.hh>
+#include <G4Threading.hh>
+#include <G4UserRunAction.hh>
 
 #include "corecel/io/Logger.hh"
 #include "celeritas/field/FieldDriverOptions.hh"
@@ -31,6 +36,29 @@ namespace dd
 {
 namespace
 {
+//---------------------------------------------------------------------------//
+/*!
+ * Master-thread G4UserRunAction that initializes Celeritas on the master.
+ *
+ * In Geant4 MT, DD4hep only installs run actions for worker threads. This
+ * class is registered with the master G4RunManager so that
+ * TrackingManagerIntegration::BeginOfRunAction is called on the master before
+ * any worker begins, satisfying the master-initialization precondition.
+ * Clone() returns nullptr because DD4hep's Build() sets the worker run action.
+ */
+class CelerMasterRunAction final : public G4UserRunAction
+{
+  public:
+    void BeginOfRunAction(G4Run const* run) override
+    {
+        TMI::Instance().BeginOfRunAction(run);
+    }
+    void EndOfRunAction(G4Run const* run) override
+    {
+        TMI::Instance().EndOfRunAction(run);
+    }
+};
+
 //---------------------------------------------------------------------------//
 
 FieldDriverOptions load_driver_options(dd4hep::sim::Geant4Action* field_action)
@@ -197,6 +225,27 @@ void CelerPhysics::constructPhysics(G4VModularPhysicsList* physics)
 
     // Configure Celeritas options
     tmi.SetOptions(this->make_options());
+
+    // In Geant4 MT, DD4hep's BuildForMaster() never installs a G4UserRunAction
+    // for the master thread, so TrackingManagerIntegration::BeginOfRunAction
+    // would never be called there. We defer the actual
+    // G4RunManager::SetUserAction call to buildMaster() because the
+    // G4UserRunAction constructor (Geant4 >= 11.3) requires the physics list
+    // to already be assigned to G4RunManager, and constructPhysics() runs
+    // inside extensionList() -- before SetUserInitialization.
+    if (G4Threading::IsMasterThread()
+        && G4Threading::IsMultithreadedApplication())
+    {
+        context()->kernel().userInitialization(true)->buildMaster(
+            this, &CelerPhysics::installMasterRunAction);
+    }
+}
+
+//---------------------------------------------------------------------------//
+
+void CelerPhysics::installMasterRunAction()
+{
+    G4RunManager::GetRunManager()->SetUserAction(new CelerMasterRunAction());
 }
 
 //---------------------------------------------------------------------------//

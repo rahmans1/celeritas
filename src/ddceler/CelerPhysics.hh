@@ -40,6 +40,11 @@ class CelerPhysics final : public dd4hep::sim::Geant4PhysicsList
 
     // Make options for Celeritas tracking manager
     SetupOptions make_options();
+
+    // Register CelerMasterRunAction with G4RunManager (deferred to buildMaster
+    // so the physics list is already assigned when G4UserRunAction is
+    // constructed)
+    void installMasterRunAction();
 };
 
 //---------------------------------------------------------------------------//
